@@ -46,7 +46,7 @@
     <Reference Include="Microsoft.SPOT.Native" />
     <Reference Include="Netduino.IP.Interop, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\MicroFrameworkPK_v4_3\Solutions\Netduino3Wifi\ManagedCode\Netduino_IP_Interop\bin\Release\Netduino.IP.Interop.dll</HintPath>
+      <HintPath>..\Netduino.IP.Interop\bin\Release\Netduino.IP.Interop.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>

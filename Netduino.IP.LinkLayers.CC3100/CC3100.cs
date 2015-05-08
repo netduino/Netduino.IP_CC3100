@@ -101,6 +101,9 @@ namespace Netduino.IP.LinkLayers
         const int MAX_CONCURRENT_ACTIONS = 11; /* one for each of 10 sockets...plus 1 for our actions */
         const int MAX_PENDING_RESPONSES = MAX_CONCURRENT_ACTIONS * 2; /* one for a response to each concurrent action, doubled in case each action has an async response */
 
+        object _sl_NetAppDnsGetHostByName_SynchronizationLockObject = new object();
+        object _sl_Select_SynchronizationLockObject = new object();
+
         AutoResetEvent _callFunctionSynchronizationEvent;
 
         class PendingResponse
@@ -520,7 +523,7 @@ namespace Netduino.IP.LinkLayers
                 if (cc3100Role != CC3100Role.ROLE_STA)
                 {
                     /* CC3100 could not be switched to station mode; determine a better exception for this */
-                    throw new Exception();
+                    throw new CC3100SimpleLinkException((Int32)cc3100Role);
                 }
             }
 
@@ -1290,70 +1293,84 @@ namespace Netduino.IP.LinkLayers
 
         public Int32 sl_NetAppDnsGetHostByName(string hostName, SocketAddressFamily addressFamily, out UInt32 ipAddress)
         {
-            Int32 index = 0;
-            Int32 status = 0;
-
-            // descriptors (32-bit aligned)
-            byte[] descriptors = new byte[4];
-            index = 0;
-            Array.Copy(CC3100BitConverter.GetBytes((UInt16)hostName.Length), 0, descriptors, index, sizeof(UInt16));
-            index += sizeof(UInt16);
-            descriptors[index] = (byte)addressFamily;
-            index++;
-            //descriptors[index] = 0x00; // dummy byte
-            index++;
-
-            // payload (32-bit aligned)
-            byte[] payload = new byte[RoundUpSizeToNearest32BitBoundary(hostName.Length)];
-            index = 0;
-            Array.Copy(System.Text.Encoding.UTF8.GetBytes(hostName), 0, payload, index, hostName.Length);
-            index += hostName.Length;
-            /* NOTE: remaining bytes are empty bytes */
-
-            // register callback function
-            CC3100Opcode asyncResponseOpCode = CC3100Opcode.NetApp_DnsGetHostByName_AsyncResponse;
-            PendingResponse asyncPendingResponse = AddPendingResponse(asyncResponseOpCode);
-
-            // call function
-            byte[] responseBytes = CallFunction(CC3100Opcode.NetApp_DnsGetHostByName_Command, CC3100Opcode.NetApp_DnsGetHostByName_Response, descriptors, payload, Timeout.Infinite);
-
-            // response contains immediate status; async response will contain final status and ip address
-            if (responseBytes == null)
+            /* NOTE: this function cannot be called by multiple threads at the same time; we use a function-specific lock to ensure thread safety */
+            lock (_sl_NetAppDnsGetHostByName_SynchronizationLockObject)
             {
-                status = -1; /* TODO: is there an appropriate error response for "timeout"? */
-            }
-            else
-            {
-                // response
+                Int32 index = 0;
+                Int32 status = 0;
+
+                // descriptors (32-bit aligned)
+                byte[] descriptors = new byte[4];
                 index = 0;
-                status = CC3100BitConverter.ToInt16(responseBytes, index);
-                index += sizeof(Int16);
-            }
-            if (status == 0) // success
-            {
-                // now wait for async response with IP address
-                asyncPendingResponse.WaitHandle.WaitOne();
-                byte[] asyncResponseBytes = (byte[])asyncPendingResponse.ResponseData;
+                Array.Copy(CC3100BitConverter.GetBytes((UInt16)hostName.Length), 0, descriptors, index, sizeof(UInt16));
+                index += sizeof(UInt16);
+                descriptors[index] = (byte)addressFamily;
+                index++;
+                //descriptors[index] = 0x00; // dummy byte
+                index++;
 
+                // payload (32-bit aligned)
+                byte[] payload = new byte[RoundUpSizeToNearest32BitBoundary(hostName.Length)];
                 index = 0;
-                status = CC3100BitConverter.ToInt16(asyncResponseBytes, index);
-                if (status == 0) // success
+                Array.Copy(System.Text.Encoding.UTF8.GetBytes(hostName), 0, payload, index, hostName.Length);
+                index += hostName.Length;
+                /* NOTE: remaining bytes are empty bytes */
+
+                // register callback function
+                CC3100Opcode asyncResponseOpCode = CC3100Opcode.NetApp_DnsGetHostByName_AsyncResponse;
+                PendingResponse asyncPendingResponse = AddPendingResponse(asyncResponseOpCode);
+
+                // call function
+                byte[] responseBytes = CallFunction(CC3100Opcode.NetApp_DnsGetHostByName_Command, CC3100Opcode.NetApp_DnsGetHostByName_Response, descriptors, payload, Timeout.Infinite);
+
+                // response contains immediate status; async response will contain final status and ip address
+                if (responseBytes == null)
                 {
-                    index += 4;
-                    ipAddress = CC3100BitConverter.ToUInt32(asyncResponseBytes, index);
+                    status = -1; /* TODO: is there an appropriate error response for "timeout"? */
                 }
                 else
                 {
+                    // response
+                    index = 0;
+                    status = CC3100BitConverter.ToInt16(responseBytes, index);
+                    index += sizeof(Int16);
+                }
+                if (status == 0) // success
+                {
+                    // now wait for async response with IP address
+                    asyncPendingResponse.WaitHandle.WaitOne();
+                    byte[] asyncResponseBytes = (byte[])asyncPendingResponse.ResponseData;
+
+                    index = 0;
+                    status = CC3100BitConverter.ToInt16(asyncResponseBytes, index);
+                    ipAddress = 0; // set to default
+                    switch (status)
+                    {
+                        case 0: // success
+                            {
+                                index += 4;
+                                ipAddress = CC3100BitConverter.ToUInt32(asyncResponseBytes, index);
+                            }
+                            break;
+                        case -161: // SL_NET_APP_DNS_NO_SERVER /* /* No DNS server was specified */
+                            {
+                                if (!_lastLinkState)
+                                    throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.NetworkDown);
+                                else
+                                    throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.HostNotFound);
+                            }
+                        default:
+                            throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.HostNotFound);
+                    }
+                }
+                else
+                {
+                    // async response will not be called
+                    RemovePendingResponse(asyncResponseOpCode);
                     ipAddress = 0;
                 }
+                return status;
             }
-            else
-            {
-                // async response will not be called
-                RemovePendingResponse(asyncResponseOpCode);
-                ipAddress = 0;
-            }
-            return status;
         }
 
         public Int32 sl_NetAppStop(sl_NetAppOptions appBitMap)
@@ -1864,138 +1881,141 @@ namespace Netduino.IP.LinkLayers
 
         public Int32 sl_Select(ref Int32[] readSocketHandles, ref Int32[] writeSocketHandles, Int32 timeoutInMicroseconds)
         {
-            Int32 index = 0;
-            Int32 status = 0;
-
-            // find highest socket handle
-            Int32 highestSocketHandlePlusOne = 1;
-            UInt16 readSocketMask = 0;
-            UInt16 writeSocketMask = 0;
-            if (readSocketHandles != null)
+            /* NOTE: this function cannot be called by multiple threads at the same time; we use a function-specific lock to ensure thread safety */
+            lock (_sl_Select_SynchronizationLockObject)
             {
-                for (int i = 0; i < readSocketHandles.Length; i++)
+                Int32 index = 0;
+                Int32 status = 0;
+
+                // find highest socket handle
+                Int32 highestSocketHandlePlusOne = 1;
+                UInt16 readSocketMask = 0;
+                UInt16 writeSocketMask = 0;
+                if (readSocketHandles != null)
                 {
-                    if ((readSocketHandles[i] & 0x0F) > highestSocketHandlePlusOne)
-                        highestSocketHandlePlusOne = (readSocketHandles[i] & 0x0F) + 1;
-                    // add the readSocketHandle to our bitmask
-                    readSocketMask |= (UInt16)(1 << (readSocketHandles[i] & 0x0F));
-                }
-            }
-            if (writeSocketHandles != null)
-            {
-                for (int i = 0; i < writeSocketHandles.Length; i++)
-                {
-                    if ((writeSocketHandles[i] & 0x0F) > highestSocketHandlePlusOne)
-                        highestSocketHandlePlusOne = (writeSocketHandles[i] & 0x0F) + 1;
-                    // add the readSocketHandle to our bitmask
-                    writeSocketMask |= (UInt16)(1 << (writeSocketHandles[i] & 0x0F));
-                }
-            }
-            //UInt32 totalTimeoutMilliseconds = (UInt32)(timeout.Ticks / System.TimeSpan.TicksPerMillisecond);
-            Int32 totalTimeoutMilliseconds = timeoutInMicroseconds / 1000;
-            UInt16 timeoutSeconds = (UInt16)(totalTimeoutMilliseconds / 1000);
-            UInt16 timeoutMilliseconds = (UInt16)(totalTimeoutMilliseconds % 1000);
-
-            // descriptors (32-bit aligned)
-            byte[] descriptors = new byte[12];
-            index = 0;
-            descriptors[index] = (byte)highestSocketHandlePlusOne;
-            index++;
-            descriptors[index] = (byte)(readSocketHandles != null ? readSocketHandles.Length : 0);
-            index++;
-            descriptors[index] = (byte)(writeSocketHandles != null ? writeSocketHandles.Length : 0);
-            index++;
-            // skip padding byte
-            index++;
-            Array.Copy(CC3100BitConverter.GetBytes(readSocketMask), 0, descriptors, index, sizeof(UInt16));
-            index += sizeof(UInt16);
-            Array.Copy(CC3100BitConverter.GetBytes(writeSocketMask), 0, descriptors, index, sizeof(UInt16));
-            index += sizeof(UInt16);
-            Array.Copy(CC3100BitConverter.GetBytes(timeoutMilliseconds), 0, descriptors, index, sizeof(UInt16));
-            index += sizeof(UInt16);
-            Array.Copy(CC3100BitConverter.GetBytes(timeoutSeconds), 0, descriptors, index, sizeof(UInt16));
-            index += sizeof(UInt16);
-
-            // payload (32-bit aligned)
-
-            // register callback function
-            /* TODO: make sure no other sl_Select functions are being called at the same time; establish a queue (and preferably...make sure it never happens) */
-            CC3100Opcode asyncResponseOpCode = CC3100Opcode.Socket_Select_AsyncResponse;
-            PendingResponse asyncPendingResponse = AddPendingResponse(asyncResponseOpCode);
-
-            // call function
-            byte[] responseBytes = CallFunction(CC3100Opcode.Socket_Select_Command, CC3100Opcode.Socket_Select_Response, descriptors, null, Timeout.Infinite);
-
-            if (responseBytes == null)
-            {
-                status = -1; // error
-            }
-            else
-            {
-                // response contains immediate status; async response will contain final status
-                index = 0;
-                status = CC3100BitConverter.ToInt16(responseBytes, index);
-            }
-
-            if (status == 0) // success
-            {
-                // now wait for async response with IP address
-                asyncPendingResponse.WaitHandle.WaitOne();
-                byte[] asyncResponseBytes = (byte[])asyncPendingResponse.ResponseData;
-
-                index = 0;
-                status = CC3100BitConverter.ToInt16(asyncResponseBytes, index);
-
-                /* TODO: sometimes we are getting shortened 4-byte reponses instead of all 8 bytes; investigate. */
-                if (status >= 0 && asyncResponseBytes.Length >= 8)
-                {
-                    index += sizeof(Int16);
-                    byte readSocketHandleCount = asyncResponseBytes[index];
-                    index++;
-                    byte writeSocketHandleCount = asyncResponseBytes[index];
-                    index++;
-                    readSocketMask = CC3100BitConverter.ToUInt16(asyncResponseBytes, index);
-                    index += sizeof(UInt16);
-                    writeSocketMask = CC3100BitConverter.ToUInt16(asyncResponseBytes, index);
-                    index += sizeof(UInt16);
-
-                    Int32[] returnReadSocketHandles = new Int32[readSocketHandleCount];
-                    Int32 iReturnReadSocketHandles = 0;
-                    if (readSocketHandles != null)
+                    for (int i = 0; i < readSocketHandles.Length; i++)
                     {
-                        for (int i = 0; i < readSocketHandles.Length; i++)
+                        if ((readSocketHandles[i] & 0x0F) > highestSocketHandlePlusOne)
+                            highestSocketHandlePlusOne = (readSocketHandles[i] & 0x0F) + 1;
+                        // add the readSocketHandle to our bitmask
+                        readSocketMask |= (UInt16)(1 << (readSocketHandles[i] & 0x0F));
+                    }
+                }
+                if (writeSocketHandles != null)
+                {
+                    for (int i = 0; i < writeSocketHandles.Length; i++)
+                    {
+                        if ((writeSocketHandles[i] & 0x0F) > highestSocketHandlePlusOne)
+                            highestSocketHandlePlusOne = (writeSocketHandles[i] & 0x0F) + 1;
+                        // add the readSocketHandle to our bitmask
+                        writeSocketMask |= (UInt16)(1 << (writeSocketHandles[i] & 0x0F));
+                    }
+                }
+                //UInt32 totalTimeoutMilliseconds = (UInt32)(timeout.Ticks / System.TimeSpan.TicksPerMillisecond);
+                Int32 totalTimeoutMilliseconds = timeoutInMicroseconds / 1000;
+                UInt16 timeoutSeconds = (UInt16)(totalTimeoutMilliseconds / 1000);
+                UInt16 timeoutMilliseconds = (UInt16)(totalTimeoutMilliseconds % 1000);
+
+                // descriptors (32-bit aligned)
+                byte[] descriptors = new byte[12];
+                index = 0;
+                descriptors[index] = (byte)highestSocketHandlePlusOne;
+                index++;
+                descriptors[index] = (byte)(readSocketHandles != null ? readSocketHandles.Length : 0);
+                index++;
+                descriptors[index] = (byte)(writeSocketHandles != null ? writeSocketHandles.Length : 0);
+                index++;
+                // skip padding byte
+                index++;
+                Array.Copy(CC3100BitConverter.GetBytes(readSocketMask), 0, descriptors, index, sizeof(UInt16));
+                index += sizeof(UInt16);
+                Array.Copy(CC3100BitConverter.GetBytes(writeSocketMask), 0, descriptors, index, sizeof(UInt16));
+                index += sizeof(UInt16);
+                Array.Copy(CC3100BitConverter.GetBytes(timeoutMilliseconds), 0, descriptors, index, sizeof(UInt16));
+                index += sizeof(UInt16);
+                Array.Copy(CC3100BitConverter.GetBytes(timeoutSeconds), 0, descriptors, index, sizeof(UInt16));
+                index += sizeof(UInt16);
+
+                // payload (32-bit aligned)
+
+                // register callback function
+                CC3100Opcode asyncResponseOpCode = CC3100Opcode.Socket_Select_AsyncResponse;
+                PendingResponse asyncPendingResponse = AddPendingResponse(asyncResponseOpCode);
+
+                // call function
+                byte[] responseBytes = CallFunction(CC3100Opcode.Socket_Select_Command, CC3100Opcode.Socket_Select_Response, descriptors, null, Timeout.Infinite);
+
+                if (responseBytes == null)
+                {
+                    status = -1; // error
+                }
+                else
+                {
+                    // response contains immediate status; async response will contain final status
+                    index = 0;
+                    status = CC3100BitConverter.ToInt16(responseBytes, index);
+                }
+
+                if (status == 0) // success
+                {
+                    // now wait for async response with IP address
+                    asyncPendingResponse.WaitHandle.WaitOne();
+                    byte[] asyncResponseBytes = (byte[])asyncPendingResponse.ResponseData;
+
+                    index = 0;
+                    status = CC3100BitConverter.ToInt16(asyncResponseBytes, index);
+
+                    /* TODO: sometimes we are getting shortened 4-byte reponses instead of all 8 bytes; investigate. */
+                    if (status >= 0 && asyncResponseBytes.Length >= 8)
+                    {
+                        index += sizeof(Int16);
+                        byte readSocketHandleCount = asyncResponseBytes[index];
+                        index++;
+                        byte writeSocketHandleCount = asyncResponseBytes[index];
+                        index++;
+                        readSocketMask = CC3100BitConverter.ToUInt16(asyncResponseBytes, index);
+                        index += sizeof(UInt16);
+                        writeSocketMask = CC3100BitConverter.ToUInt16(asyncResponseBytes, index);
+                        index += sizeof(UInt16);
+
+                        Int32[] returnReadSocketHandles = new Int32[readSocketHandleCount];
+                        Int32 iReturnReadSocketHandles = 0;
+                        if (readSocketHandles != null)
                         {
-                            if ((readSocketMask & (1 << (readSocketHandles[i] & 0x0F))) > 0)
+                            for (int i = 0; i < readSocketHandles.Length; i++)
                             {
-                                returnReadSocketHandles[iReturnReadSocketHandles] = readSocketHandles[i];
-                                iReturnReadSocketHandles++;
+                                if ((readSocketMask & (1 << (readSocketHandles[i] & 0x0F))) > 0)
+                                {
+                                    returnReadSocketHandles[iReturnReadSocketHandles] = readSocketHandles[i];
+                                    iReturnReadSocketHandles++;
+                                }
                             }
                         }
-                    }
-                    readSocketHandles = returnReadSocketHandles;
+                        readSocketHandles = returnReadSocketHandles;
 
-                    Int32[] returnWriteSocketHandles = new Int32[writeSocketHandleCount];
-                    Int32 iReturnWriteSocketHandles = 0;
-                    if (writeSocketHandles != null)
-                    {
-                        for (int i = 0; i < writeSocketHandles.Length; i++)
+                        Int32[] returnWriteSocketHandles = new Int32[writeSocketHandleCount];
+                        Int32 iReturnWriteSocketHandles = 0;
+                        if (writeSocketHandles != null)
                         {
-                            if ((writeSocketMask & (1 << (writeSocketHandles[i] & 0x0F))) > 0)
+                            for (int i = 0; i < writeSocketHandles.Length; i++)
                             {
-                                returnWriteSocketHandles[iReturnWriteSocketHandles] = writeSocketHandles[i];
-                                iReturnWriteSocketHandles++;
+                                if ((writeSocketMask & (1 << (writeSocketHandles[i] & 0x0F))) > 0)
+                                {
+                                    returnWriteSocketHandles[iReturnWriteSocketHandles] = writeSocketHandles[i];
+                                    iReturnWriteSocketHandles++;
+                                }
                             }
                         }
+                        writeSocketHandles = returnWriteSocketHandles;
                     }
-                    writeSocketHandles = returnWriteSocketHandles;
                 }
+                else
+                {
+                    // async response will not be called
+                    RemovePendingResponse(asyncResponseOpCode);
+                }
+                return status;
             }
-            else
-            {
-                // async response will not be called
-                RemovePendingResponse(asyncResponseOpCode);
-            }
-            return status;
         }
 
         /* TODO NOTE: Send does _not_ have a command response on CC3100, so in theory we could overflow our transmission medium by sending more data faster than it can
@@ -2859,7 +2879,7 @@ namespace Netduino.IP.LinkLayers
                 /* ERRATA fix: retry sl_NetCfgGet up to 3 times, 100ms apart, to work around an unknown CC3100 error code (-21991) */
                 Int32 retVal = sl_NetCfgGet(SL_NetCfg_ConfigID.SL_IPV4_STA_P2P_CL_GET_INFO, ref dhcpIsOn, values);
                 if (retVal < 0)
-                    throw new Exception(); /* TODO: determine best exception to use for "could not communicate with CC3100 module" */
+                    throw new CC3100SimpleLinkException(retVal); /* TODO: determine best exception to use for "could not communicate with CC3100 module" */
 
                 // parse response
                 lock (_cachedIpv4ConfigurationLockObject)

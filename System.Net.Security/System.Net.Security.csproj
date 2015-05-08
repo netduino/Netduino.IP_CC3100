@@ -37,6 +37,10 @@
     <Reference Include="Microsoft.SPOT.Net.Security" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.SPOT.Net\Microsoft.SPOT.Net.csproj">
+      <Project>{31E2FAAD-59A4-4751-A7FD-38003E34D2AB}</Project>
+      <Name>Microsoft.SPOT.Net</Name>
+    </ProjectReference>
     <ProjectReference Include="..\System\System.csproj">
       <Project>{B9C95976-997C-4933-BC3A-8711CA452987}</Project>
       <Name>System</Name>

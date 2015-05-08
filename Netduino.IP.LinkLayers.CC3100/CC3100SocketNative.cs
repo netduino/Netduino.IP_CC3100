@@ -304,7 +304,13 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Socket(ccSocketAddressFamily, ccSocketSocketType, ccSocketProtocolType);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                switch (retVal)
+                {
+                    case -10: // SL_ENSOCK /* The system limit on the total number of open socket, has been reached */
+                        throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.TooManyOpenSockets);
+                    default:
+                        throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
+                }
             }
 
             return retVal;
@@ -327,7 +333,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Bind(handle, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, ipAddress, ipPort);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
         }
 
@@ -345,7 +351,15 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Connect(handle, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, ipAddress, ipPort);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                switch (retVal)
+                {
+                    case -110: // SL_ETIMEDOUT /* Connection timed out */
+                        throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.TimedOut);
+                    case -111: // SL_ECONNREFUSED /* Connection refused */
+                        throw new System.Net.Sockets.SocketException(System.Net.Sockets.SocketError.ConnectionRefused);
+                    default:
+                        throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
+                }
             }
         }
 
@@ -363,7 +377,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Send(handle, buf, offset, count, 0);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             return retVal; // positive value indicates # of bytes sent
@@ -399,7 +413,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Recv(handle, buf, offset, count, 0);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             return retVal; // positive value indicates # of bytes received
@@ -413,7 +427,7 @@ namespace Netduino.IP.LinkLayers
             if (retVal < 0)
                 if (retVal < 0)
                 {
-                    throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                    throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
                 }
 
             /* NOTE: the return value of close() is not used by NETMF as of March 2015 */
@@ -427,7 +441,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Listen(handle, (Int16)backlog);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
         }
 
@@ -440,7 +454,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_Accept(handle, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, out ipAddress, out ipPort);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             return retVal; // this is our accepted connection's socketHandle
@@ -466,7 +480,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_NetAppDnsGetHostByName(name, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, out ipAddress);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             addresses = new byte[][] { new byte[8] };
@@ -539,7 +553,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_SendTo(handle, buf, offset, count, 0, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, ipAddress, ipPort);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             return retVal; // positive value indicates # of bytes sent
@@ -571,7 +585,7 @@ namespace Netduino.IP.LinkLayers
             Int32 retVal = _cc3100.sl_RecvFrom(handle, buf, offset, count, 0, Netduino.IP.LinkLayers.CC3100.SocketAddressFamily.IPv4, out ipAddress, out ipPort);
             if (retVal < 0)
             {
-                throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
             }
 
             address[2] = (byte)((ipPort >> 8) & 0xFF);
@@ -670,7 +684,7 @@ namespace Netduino.IP.LinkLayers
                                     int retVal = _cc3100.sl_GetSockOpt(handle, 1 /* SL_SOL_SOCKET */, 25 /* SL_SO_SECMETHOD */, optval);
                                     if (retVal < 0)
                                     {
-                                        throw new Exception(); /* TODO: what is the correct exception? */
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
                                     }
                                 }
                                 break;
@@ -737,7 +751,7 @@ namespace Netduino.IP.LinkLayers
                                     int retVal = _cc3100.sl_SetSockOpt(handle, 1 /* SL_SOL_SOCKET */, 20 /* SL_SO_RCVTIMEO */, optval);
                                     if (retVal < 0)
                                     {
-                                        throw new Exception(); /* TODO: what is the correct exception? */
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
                                     }
                                 }
                                 break;
@@ -746,7 +760,60 @@ namespace Netduino.IP.LinkLayers
                                     int retVal = _cc3100.sl_SetSockOpt(handle, 1 /* SL_SOL_SOCKET */, 25 /* SL_SO_SECMETHOD */, optval);
                                     if (retVal < 0)
                                     {
-                                        throw new Exception(); /* TODO: what is the correct exception? */
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
+                                    }
+                                }
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    break;
+                case 0x0000: /* IP */
+                    {
+                        switch (optname)
+                        {
+                            case 10: /* MulticastTimeToLive */
+                                {
+                                    byte ttl;
+                                    if (SystemInfo.IsBigEndian)
+                                        ttl = optval[3];
+                                    else
+                                        ttl = optval[0];
+                                    int retVal = _cc3100.sl_SetSockOpt(handle, 2 /* SL_IPPROTO_IP */, 61 /* SL_IP_MULTICAST_TTL */, new byte[] { ttl });
+                                    if (retVal < 0)
+                                    {
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
+                                    }
+                                }
+                                break;
+                            case 12: /* AddMembership */
+                                {
+                                    /* TODO: implement Socket.SetSocketOption extension method that can pass in an object.  Implement the MulticastOption class.  And then detect that class here and parse out its 
+                                     *       multicastAddress and localAddress */
+                                    /* TODO: make sure that the addresses are being received in the correct LE vs BE order */
+                                    //byte[] multicastOptVal = new byte[8];
+                                    //Array.Copy(multicastOption.Group.GetAddressBytes(), 0, multicastOptVal, 0, sizeof(UInt32));
+                                    //Array.Copy(multicastOption.LocalAddress.GetAddressBytes(), 0, multicastOptVal, 4, sizeof(UInt32));
+                                    int retVal = _cc3100.sl_SetSockOpt(handle, 2 /* SL_IPPROTO_IP */, 65 /* SL_IP_ADD_MEMBERSHIP */, optval);
+                                    if (retVal < 0)
+                                    {
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
+                                    }
+                                }
+                                break;
+                            case 13: /* DropMembership */
+                                {
+                                    /* TODO: implement Socket.SetSocketOption extension method that can pass in an object.  Implement the MulticastOption class.  And then detect that class here and parse out its 
+                                     *       multicastAddress and localAddress */
+                                    /* TODO: make sure that the addresses are being received in the correct LE vs BE order */
+                                    //byte[] multicastOptVal = new byte[8];
+                                    //Array.Copy(multicastOption.Group.GetAddressBytes(), 0, multicastOptVal, 0, sizeof(UInt32));
+                                    //Array.Copy(multicastOption.LocalAddress.GetAddressBytes(), 0, multicastOptVal, 4, sizeof(UInt32));
+                                    int retVal = _cc3100.sl_SetSockOpt(handle, 2 /* SL_IPPROTO_IP */, 66 /* SL_IP_DROP_MEMBERSHIP */, optval);
+                                    if (retVal < 0)
+                                    {
+                                        throw new CC3100SimpleLinkException(retVal); /* TODO: what is the correct exception? */
                                     }
                                 }
                                 break;
@@ -765,6 +832,8 @@ namespace Netduino.IP.LinkLayers
                                 break;
                         }
                     }
+                    break;
+                case 0x0011: /* UDP */
                     break;
                 default:
                     break;
@@ -799,7 +868,7 @@ namespace Netduino.IP.LinkLayers
                 }
                 else
                 {
-                    throw new Exception(); /* TODO: determine the best exception, based on retVal */
+                    throw new CC3100SimpleLinkException(retVal); /* TODO: determine the best exception, based on retVal */
                 }
             }
 
